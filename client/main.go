@@ -6,10 +6,12 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/signal"
+	"syscall"
 )
 
-//You can add cmd to say number of users and all usernames and private message to user by saying "!private /username/ /message/"
-//check if server terminates(ctrl+c) badly and kicks you out
+//Add cmd to say number of users and all usernames and private message to user by saying "!private /username/ /message/"
+//check if server terminates badly and kicks you out
 
 // Reads from Server and returns the message as a string instead of buffer
 func readFromCon(c net.Conn) string {
@@ -28,6 +30,7 @@ func readFromCon(c net.Conn) string {
 	s := bytes.Trim(buf, "\x00")
 
 	return string(s)
+	// return strings.Join(s, " ")
 }
 
 // Writes to server from a given string and returns the sent message
@@ -54,22 +57,15 @@ func writeToServer(c net.Conn) string {
 	return writeToServerStr(c, message)
 }
 
-// // Writes to the chat from standard input and returns the sent message
-// func talkToChat(c net.Conn, usr string) string {
-// 	var message string
-// 	fmt.Scanf("%s", &message)
-// 	return writeToServerStr(c, usr+": "+message)
-// }
-
 func main() {
-	// fmt.Print("Input the server you want to connect to: ")
-	// var addr string
-	// fmt.Scanf("%s", &addr)
-	// client, err := net.Dial("tcp", addr)
+	fmt.Print("Input the server you want to connect to: ")
+	var addr string
+	fmt.Scanf("%s", &addr)
+	client, err := net.Dial("tcp", addr)
 
 	// client, err := net.Dial("tcp", "192.168.0.3:8080")
 	// client, err := net.Dial("tcp", "192.168.0.3:0")
-	client, err := net.Dial("tcp", "192.168.0.3:64619")
+	// client, err := net.Dial("tcp", "192.168.0.3:64619")
 	if err != nil {
 		fmt.Println("Error with connecting: ", err.Error())
 		return
@@ -108,7 +104,7 @@ func main() {
 		}
 	}()
 
-	//TURNS OUT SCANLN doesnt scan the whole line and ignores ALL whitespaces so use bufio to replace it
+	//TURNS OUT SCANLN doesnt scan the fucking line and ignores ALL whitespaces
 	for run {
 		// Talking in the chat
 		var message string
@@ -123,4 +119,35 @@ func main() {
 			writeToServerStr(client, username+": "+message)
 		}
 	}
+	//use this
+	// scanner := bufio.NewScanner(os.Stdin)
+	// if scanner.Scan() {
+	//     line := scanner.Text()
+	//     fmt.Printf("Input was: %q\n", line)
+	// }
+
+	// Channel to read signals.
+	sigs := make(chan os.Signal, 1)
+
+	// Registers the given channel to receive notifications of the specified signals.
+	signal.Notify(sigs, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+
+	go func() {
+		for {
+			sig := <-sigs
+			switch sig {
+			case syscall.SIGHUP:
+				fmt.Println("SIGHUP")
+			case syscall.SIGINT:
+				fmt.Println("SIGINT")
+			case syscall.SIGTERM:
+				fmt.Println("SIGTERM")
+			case syscall.SIGQUIT:
+				fmt.Println("SIGQUIT")
+			default:
+				fmt.Println("Unknown signal")
+			}
+		}
+	}()
+
 }
