@@ -6,33 +6,70 @@ import (
 	"io"
 	"net"
 	"strings"
+	"sync"
 )
 
-
-//check if removeStr or removeconnelement2 are in use before allowing others to use it
-
-// Removes string element from string array
-func removeStr(s []string, str string) []string {
-	for i, v := range s {
-		if v == str {
-			return append(s[:i], s[i+1:]...)
-		}
-	}
-	return s
+type ConcurrentSlice struct {
+	sync.Mutex
+	messages []string
 }
 
-// Removes element from net.Conn slice
-// func removeConnElement(c []net.Conn, i int) []net.Conn {
-// 	return append(c[:i], c[i+1:]...)
-// }
+func (slice *ConcurrentSlice) Append(str string) {
+	slice.messages = append(slice.messages, str)
+}
 
-func removeConnElement2(c []net.Conn, el net.Conn) []net.Conn {
-	for i, v := range c {
-		if v == el {
-			return append(c[:i], c[i+1:]...)
+func (slice *ConcurrentSlice) CleanHistory(ind int) {
+	slice.Lock()
+	defer slice.Unlock()
+
+	slice.messages = slice.messages[ind:]
+}
+
+///////////////////////////////
+type ConcSliceUsr struct {
+	sync.Mutex
+	usernames []string
+}
+
+func (slice *ConcSliceUsr) Append(usr string) {
+	slice.usernames = append(slice.usernames, usr)
+}
+
+func (slice *ConcSliceUsr) RemoveUsername(str string) {
+	slice.Lock()
+	defer slice.Unlock()
+
+	for i, v := range slice.usernames {
+		if v == str {
+			slice.usernames = append(slice.usernames[:i], slice.usernames[i+1:]...)
+			break
 		}
 	}
-	return c
+}
+
+///////////////////////////////
+type ConcSliceIndices struct {
+	sync.Mutex
+	indices []*int
+}
+
+func (slice *ConcSliceIndices) Append(ind *int) {
+	slice.indices = append(slice.indices, ind)
+}
+
+func (slice *ConcSliceIndices) GetInd(ind int) *int {
+	return slice.indices[ind]
+}
+func (slice *ConcSliceIndices) RemoveInd(ind *int) {
+	slice.Lock()
+	defer slice.Unlock()
+
+	for i, v := range slice.indices {
+		if v == ind {
+			slice.indices = append(slice.indices[:i], slice.indices[i+1:]...)
+			break
+		}
+	}
 }
 
 // Reads from Client and returns the message as a string instead of buffer
@@ -140,8 +177,10 @@ func main() {
 	// fmt.Scanf("%s", &host)
 	// listener, err := net.Listen("tcp", host+":")
 
+	//For TCP networks, if the host in the address parameter is empty Listen listens on all available unicast and anycast IP addresses of the local system.  The address can use a host name, but this is not recommended, because it will create a listener for at most one of the host's IP addresses.
 	// listener, err := net.Listen("tcp", ":8080")
 	// listener, err := net.Listen("tcp", "192.168.0.3:8080")
+	// you need to write ur own address
 	listener, err := net.Listen("tcp", "192.168.0.3:")
 	if err != nil {
 		fmt.Println("Error with listening: ", err.Error())
@@ -152,37 +191,44 @@ func main() {
 	fmt.Println("Server Address: " + listener.Addr().String())
 
 	// creating an array of existing usernames
-	usernames := []string{}
-	// usernames := make([]string, 0)
-	clients := []net.Conn{}
-	//everytime someone disconnects the username gets deleted
-	//for loop to accept multiple incoming connections
+	var users ConcSliceUsr
 
 	// chat messages
-	chatMess := []string{}
+	var chat ConcurrentSlice
+	var indices ConcSliceIndices
 	run := true
 
-	// Updating chat in go routine
 	go func() {
 		for run {
-			if len(chatMess) != 0 {
-				message := chatMess[0]
-				size := len(clients)
-				for i := 0; i < size; i++ {
-					//dont allow to change the array while doing this
-					//and if the array is being changed then wait
-					writeFromStr(clients[i], message)
+			if len(chat.messages) >= 256 {
+				var allread bool
+				//lock w
+				for i := 0; i < len(indices.indices); i++ {
+					if *(indices.indices)[i] < 256 { //whats tha val of *indices.indices[i]
+						allread = false
+					}
 				}
-				// Remove front message from the "queue" of messages
-				chatMess = chatMess[1:]
+				// Until everyone reads the last 256 messages
+				for allread {
+					allread = true
+					for i := 0; i < len(indices.indices); i++ {
+						if *indices.indices[i] < 256 {
+							allread = false
+						}
+					}
+				}
+
+				chat.CleanHistory(256)
+				for i := 0; i < len(indices.indices); i++ {
+					*indices.indices[i] -= 256
+					//unlock w
+				}
 			}
 		}
 	}()
 
 	go func() {
 		for run {
-			// fmt.Println("In for loop for incoming connections!")
-
 			conn, err := listener.Accept()
 			if err != nil {
 				fmt.Println("Error with listening: ", err.Error())
@@ -191,8 +237,8 @@ func main() {
 			// fmt.Println("Local addr: " + conn.LocalAddr().String())  // this is mine aka the server
 			// fmt.Println("Remote addr: " + conn.RemoteAddr().String()) //this is the clients
 
-			// fmt.Println("Passed .Accept point!")
-			go func(c net.Conn) {
+			// Handling the connection
+			go func(conn net.Conn) {
 				fmt.Println("Remote address " + conn.RemoteAddr().String() + " connected!")
 
 				// conn.Write([]byte("Welcome to the server! Pick a nickname: "))
@@ -207,12 +253,11 @@ func main() {
 				username = removeWhitespaces(username)
 				// fmt.Println("TEMP picked username: -" + username + "-")
 
-				again := contains(usernames, username) || !valid(username)
+				again := contains(users.usernames, username) || !valid(username)
 				//Loop to let the client create a username that is valid and not already in use
 				for again {
 					conn.Write([]byte("again"))
-					// conn.Write([]byte("Uh oh! The username you chose is either taken or contains forbidden symbols.\nAllowed symbols are all letters and digits and '.', '-', '_', '~'.\nTry entering another username: "))
-					if contains(usernames, username) {
+					if contains(users.usernames, username) {
 						conn.Write([]byte("Uh oh! The username you chose is already taken! Enter another username: "))
 					}
 					if !valid(username) {
@@ -220,41 +265,51 @@ func main() {
 					}
 
 					username = removeWhitespaces(readFromCon(conn))
-					again = contains(usernames, username) || !valid(username)
+					again = contains(users.usernames, username) || !valid(username)
 				}
 				conn.Write([]byte(username))
 
 				//Adding the chosen username to the slice of usernames
-				usernames = append(usernames, username)
-				//Adding the succesfully connected to the chat clients
-				clients = append(clients, conn)
+				users.Append(username)
 
 				//TEMP remember to make client read this
 				conn.Write([]byte("You have successfully connected to the server! To leave just type \"!exit\"\n"))
 
-				// Announcing to everyone in the chat that username has joined
-				for i := 0; i < len(clients); i++ {
-					conn.Write([]byte(username + " joined the chat! Say hi!\n"))
-				}
-				
-				// Receiving client messeges while the server is running
+				// Adding announcement to the chat messages
+				chat.Append(username + " joined the chat! Say hi!\n")
+
+				// Index to start reading messages from
+				ind := len(chat.messages) - 1
+
+				// Updating chat in go routine
+				go func() {
+					for run {
+						if ind < len(chat.messages) {
+							writeFromStr(conn, chat.messages[ind])
+							ind++
+						}
+					}
+				}()
+
+				// Receiving client messages while the server is running
 				for run {
 					receive := readFromCon(conn)
 					if receive == "!exit" {
-						usernames = removeStr(usernames, username)
-						clients = removeConnElement2(clients, conn)
+						chat.Append(username + " disconnected.")
+						users.RemoveUsername(username)
+						indices.RemoveInd(&ind)
 						conn.Close()
 						break
 					} else {
-						// Adding new message to the "queue" of all chat messages
-						chatMess = append(chatMess, receive)
+						// Adding new message to the chat messages slice
+						chat.Append(receive)
 					}
 				}
 
 			}(conn)
-
 		}
 	}()
+
 	var cmd string
 	for {
 		fmt.Scanf("%s", cmd)
