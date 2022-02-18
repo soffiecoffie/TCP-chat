@@ -280,6 +280,7 @@ func main() {
 	ok = true
 
 	fmt.Println("Server Address: " + listener.Addr().String())
+	fmt.Println("To stop server write \"stop\"")
 
 	// Creating an array of existing usernames
 	var users ConcSliceUsr
