@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"io"
@@ -8,10 +9,12 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 )
 
-//Add cmd to say number of users and all usernames and private message to user by saying "!private /username/ /message/"
-//check if server terminates badly and kicks you out
+var receivingMsgs = true
+var inChat = false
+var run = true
 
 // Reads from Server and returns the message as a string instead of buffer
 func readFromCon(c net.Conn) string {
@@ -20,17 +23,33 @@ func readFromCon(c net.Conn) string {
 	if err != nil {
 		if err != io.EOF {
 			fmt.Println("Error with reading: ", err.Error())
+			os.Exit(1)
+			return ""
 		}
-		// break
-		// return
-		//os.Exit(1)
-		fmt.Println("err = io.eof")
+		fmt.Println("err = io.eof") //yn
+		os.Exit(1)                  //yn
+		return ""
 	}
+
 	// Removes null characters from buf and puts result in slice
 	s := bytes.Trim(buf, "\x00")
+	ifServerClosed(string(s))
 
 	return string(s)
-	// return strings.Join(s, " ")
+}
+
+func readFromStdin() string {
+	var reader = bufio.NewReader(os.Stdin)
+	message, _ := reader.ReadString('\n')
+
+	if len(message) > 2 {
+		// Removes last 2 characters which are '\n' and ascii(13) ""
+		message = message[:len(message)-2]
+	} else if len(message) == 1 && message[0] == '\n' ||
+		len(message) == 2 && message[0] == 13 && message[1] == '\n' {
+		return ""
+	}
+	return message
 }
 
 // Writes to server from a given string and returns the sent message
@@ -40,114 +59,173 @@ func writeToServerStr(c net.Conn, message string) string {
 	// Write to server
 	_, err := c.Write(buf)
 	if err != nil {
-		// if err != io.EOF {
-		// 	fmt.Println("Error with reading: ", err.Error())
-		// }
-		// break
-		// return //yes or no
-		os.Exit(1)
+		fmt.Println("Error with writing: ", err.Error())
+		return ""
 	}
 	return message
 }
 
-// Writes to server from standard input and returns the sent message
-func writeToServer(c net.Conn) string {
-	var message string
-	fmt.Scanln(&message)
-	return writeToServerStr(c, message)
-}
-
-func main() {
-	fmt.Print("Input the server you want to connect to: ")
-	var addr string
-	fmt.Scanf("%s", &addr)
-	client, err := net.Dial("tcp", addr)
-
-	// client, err := net.Dial("tcp", "192.168.0.3:8080")
-	// client, err := net.Dial("tcp", "192.168.0.3:0")
-	// client, err := net.Dial("tcp", "192.168.0.3:64619")
-	if err != nil {
-		fmt.Println("Error with connecting: ", err.Error())
-		return
-	}
-	defer client.Close()
-	// fmt.Println("Local addr: " + client.LocalAddr().String()) //clients addr
-	// fmt.Println("Remote addr: " + client.RemoteAddr().String()) //server addr
-
-	// Writing to the server
-	received := readFromCon(client)
-	fmt.Print(received)
-	writeToServer(client)
-	received = readFromCon(client)
-	again := received == "again"
-	for again {
-		received = readFromCon(client)
-		fmt.Print(received)
-		writeToServer(client)
-		received = readFromCon(client)
-		again = received == "again"
-	}
-	username := received
-	// fmt.Println("Username is: " + username)
-
-	received = readFromCon(client)
-	fmt.Print(received)
-
-	cmd := "!exit"
-	run := true
-
-	// Receiving chat messages
-	go func() {
-		for run {
-			received = readFromCon(client)
-			fmt.Println(received)
-		}
-	}()
-
-	//TURNS OUT SCANLN doesnt scan the fucking line and ignores ALL whitespaces
-	for run {
-		// Talking in the chat
-		var message string
-		fmt.Scanln(&message)
-		fmt.Println("YOUR MESSAGE IS:", message)
-		if message == cmd {
-			run = false
-			writeToServerStr(client, username+" exited.")
-			writeToServerStr(client, "!exit")
-			fmt.Println("Sad to see you go!")
-		} else {
-			writeToServerStr(client, username+": "+message)
-		}
-	}
-	//use this
-	// scanner := bufio.NewScanner(os.Stdin)
-	// if scanner.Scan() {
-	//     line := scanner.Text()
-	//     fmt.Printf("Input was: %q\n", line)
-	// }
-
-	// Channel to read signals.
+// Handles Signals
+func handleSignals(client net.Conn, usr string, chatting bool) {
+	// Making a channel to read signals.
 	sigs := make(chan os.Signal, 1)
-
+	fmt.Printf("IN HANDLE SIG WITH chatting= %t\n", chatting)
 	// Registers the given channel to receive notifications of the specified signals.
 	signal.Notify(sigs, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 
+	stop := false
+	for !stop {
+		fmt.Printf("IN HANDLE SIG WITH chatting= %t\n", chatting)
+
+		sig := <-sigs
+		if chatting != inChat {
+			return
+		}
+		switch sig {
+		case syscall.SIGHUP:
+			fmt.Println("SIGHUP")
+			if chatting {
+				writeToServerStr(client, usr+" exited.")
+				run = false
+				writeToServerStr(client, "!exit")
+			} else {
+				writeToServerStr(client, "!exit")
+				os.Exit(0)
+			}
+			stop = true
+			for receivingMsgs {
+				time.Sleep(0 * time.Second)
+			}
+		case syscall.SIGINT:
+			fmt.Println("SIGINT")
+			if chatting {
+				writeToServerStr(client, usr+" exited.")
+				run = false
+				writeToServerStr(client, "!exit")
+
+			} else {
+				writeToServerStr(client, "!exit")
+			}
+			stop = true
+		case syscall.SIGTERM:
+			fmt.Println("SIGTERM")
+			if chatting {
+				writeToServerStr(client, usr+" exited.")
+				run = false
+				writeToServerStr(client, "!exit")
+
+			} else {
+				writeToServerStr(client, "!exit")
+			}
+			stop = true
+		case syscall.SIGQUIT:
+			fmt.Println("SIGQUIT")
+			if chatting {
+				writeToServerStr(client, usr+" exited.")
+				run = false
+				writeToServerStr(client, "!exit")
+
+			} else {
+				writeToServerStr(client, "!exit")
+			}
+			stop = true
+		default:
+			fmt.Println("Unknown signal")
+		}
+	}
+}
+
+func ifServerClosed(msg string) {
+	if msg == "Chat is closing now! See you next time!" {
+		fmt.Println(msg)
+		os.Exit(0)
+	}
+}
+
+func main() {
+	go handleSignals(nil, "", false)
+	fmt.Print("Input the server you want to connect to: ")
+	addr := readFromStdin()
+
+	client, err := net.Dial("tcp", addr)
+	if err != nil {
+		fmt.Println("Error with connecting: ", err.Error())
+		os.Exit(1)
+	}
+	defer client.Close()
+
+	inChat = true
+	go handleSignals(client, client.RemoteAddr().String(), true)
+
+	received := readFromCon(client)
+	fmt.Print(received)
+
+	username := readFromStdin()
+
+	writeToServerStr(client, username)
+	received = readFromCon(client)
+
+	// Check if server has closed
+	ifServerClosed(received)
+	again := received == "again" || received == "!exit"
+	for again {
+		if received == "!exit" {
+			fmt.Println("Sad to see you go!")
+			os.Exit(0)
+		}
+		received = readFromCon(client)
+		fmt.Print(received)
+		username = readFromStdin()
+		writeToServerStr(client, username)
+		received = readFromCon(client)
+		again = received == "again" || received == "!exit"
+
+		// Check if server has closed
+		ifServerClosed(received)
+	}
+	username = received
+
+	// Receive the "You have successfully connected to the server! To leave just type \"!exit\"\n" message
+	received = readFromCon(client)
+	fmt.Print(received)
+
+	receivingMsgs := true
+
+	ch := make(chan int)
+	// Receiving chat messages
 	go func() {
-		for {
-			sig := <-sigs
-			switch sig {
-			case syscall.SIGHUP:
-				fmt.Println("SIGHUP")
-			case syscall.SIGINT:
-				fmt.Println("SIGINT")
-			case syscall.SIGTERM:
-				fmt.Println("SIGTERM")
-			case syscall.SIGQUIT:
-				fmt.Println("SIGQUIT")
-			default:
-				fmt.Println("Unknown signal")
+		for receivingMsgs {
+			received = readFromCon(client)
+
+			// Client recieves "!exit" from the server when it's ok to exit
+			if received == "!exit" {
+				fmt.Println("Sad to see you go!")
+
+				receivingMsgs = false
+				ch <- 1
+				return
+			} else {
+				fmt.Println(received)
 			}
 		}
 	}()
 
+	var message string
+	for run || receivingMsgs {
+		// Talking in the chat
+		if run {
+			message = readFromStdin() //blocks and waits for input
+			if message == "!exit" {
+				run = false
+				writeToServerStr(client, "!exit")
+			} else {
+				writeToServerStr(client, username+": "+message)
+			}
+		} else {
+			fin := <-ch
+			if fin == 1 {
+				break
+			}
+		}
+	}
 }
