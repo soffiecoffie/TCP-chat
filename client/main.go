@@ -9,12 +9,12 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 )
 
-var receivingMsgs = true
-var inChat = false
-var run = true
+var (
+	run = true
+	ch  = make(chan int)
+)
 
 // Reads from Server and returns the message as a string instead of buffer
 func readFromCon(c net.Conn) string {
@@ -26,8 +26,8 @@ func readFromCon(c net.Conn) string {
 			os.Exit(1)
 			return ""
 		}
-		fmt.Println("err = io.eof") 
-		os.Exit(1)                  
+		fmt.Println("err = io.eof") //yn
+		os.Exit(1)                  //yn
 		return ""
 	}
 
@@ -38,6 +38,7 @@ func readFromCon(c net.Conn) string {
 	return string(s)
 }
 
+// Reads from standard input and returns the message
 func readFromStdin() string {
 	var reader = bufio.NewReader(os.Stdin)
 	message, _ := reader.ReadString('\n')
@@ -66,75 +67,55 @@ func writeToServerStr(c net.Conn, message string) string {
 }
 
 // Handles Signals
-func handleSignals(client net.Conn, usr string, chatting bool) {
+func handleSignals(client net.Conn) {
 	// Making a channel to read signals.
 	sigs := make(chan os.Signal, 1)
-	fmt.Printf("IN HANDLE SIG WITH chatting= %t\n", chatting)
 	// Registers the given channel to receive notifications of the specified signals.
 	signal.Notify(sigs, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 
 	stop := false
 	for !stop {
-		fmt.Printf("IN HANDLE SIG WITH chatting= %t\n", chatting)
-
 		sig := <-sigs
-		if chatting != inChat {
-			return
-		}
 		switch sig {
 		case syscall.SIGHUP:
 			fmt.Println("SIGHUP")
-			if chatting {
-				writeToServerStr(client, usr+" exited.")
-				run = false
-				writeToServerStr(client, "!exit")
-			} else {
-				writeToServerStr(client, "!exit")
+			run = false
+			writeToServerStr(client, "!exit")
+			fin := <-ch
+			if fin == 1 {
 				os.Exit(0)
-			}
-			stop = true
-			for receivingMsgs {
-				time.Sleep(0 * time.Second)
 			}
 		case syscall.SIGINT:
 			fmt.Println("SIGINT")
-			if chatting {
-				writeToServerStr(client, usr+" exited.")
-				run = false
-				writeToServerStr(client, "!exit")
-
-			} else {
-				writeToServerStr(client, "!exit")
+			run = false
+			writeToServerStr(client, "!exit")
+			fin := <-ch
+			if fin == 1 {
+				os.Exit(0)
 			}
-			stop = true
 		case syscall.SIGTERM:
 			fmt.Println("SIGTERM")
-			if chatting {
-				writeToServerStr(client, usr+" exited.")
-				run = false
-				writeToServerStr(client, "!exit")
-
-			} else {
-				writeToServerStr(client, "!exit")
+			run = false
+			writeToServerStr(client, "!exit")
+			fin := <-ch
+			if fin == 1 {
+				os.Exit(0)
 			}
-			stop = true
 		case syscall.SIGQUIT:
 			fmt.Println("SIGQUIT")
-			if chatting {
-				writeToServerStr(client, usr+" exited.")
-				run = false
-				writeToServerStr(client, "!exit")
-
-			} else {
-				writeToServerStr(client, "!exit")
+			run = false
+			writeToServerStr(client, "!exit")
+			fin := <-ch
+			if fin == 1 {
+				os.Exit(0)
 			}
-			stop = true
 		default:
 			fmt.Println("Unknown signal")
 		}
 	}
 }
 
+// Checks if server is closing
 func ifServerClosed(msg string) {
 	if msg == "Chat is closing now! See you next time!" {
 		fmt.Println(msg)
@@ -143,7 +124,6 @@ func ifServerClosed(msg string) {
 }
 
 func main() {
-	go handleSignals(nil, "", false)
 	fmt.Print("Input the server you want to connect to: ")
 	addr := readFromStdin()
 
@@ -154,8 +134,7 @@ func main() {
 	}
 	defer client.Close()
 
-	inChat = true
-	go handleSignals(client, client.RemoteAddr().String(), true)
+	go handleSignals(client)
 
 	received := readFromCon(client)
 	fmt.Print(received)
@@ -191,7 +170,7 @@ func main() {
 
 	receivingMsgs := true
 
-	ch := make(chan int)
+	// ch := make(chan int)
 	// Receiving chat messages
 	go func() {
 		for receivingMsgs {
