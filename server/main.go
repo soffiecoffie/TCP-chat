@@ -18,7 +18,6 @@ var (
 	sendingMessages = true
 	ok              = false
 	cleaningHistory = false
-	inChat          = false
 	chat            ConcurrentSlice
 	ind             ConcSliceIndices
 )
@@ -192,63 +191,31 @@ func valid(str string) bool {
 }
 
 // Handles signals
-func handleSignals(chatting bool) {
+func handleSignals() {
 	// Channel to read signals.
 	sigs := make(chan os.Signal, 1)
-	fmt.Println("IN HANDLE")
 	// Registers the given channel to receive notifications of the specified signals.
 	signal.Notify(sigs, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 
-	stop := false
-
-	for !stop {
+	for {
 		sig := <-sigs
-		if chatting != inChat {
-			return
-		}
 		switch sig {
 		case syscall.SIGHUP:
 			fmt.Println("SIGHUP")
-			if !chatting {
-				// closingServer(chat)
-				closingServer()
-				stop = true
-			} else {
-				os.Exit(0)
-			}
-			//os.Exit()??
-			// chat.Append("Server has closed!\n")
-			// fmt.Println("Server closed!")
+			closingServer()
+			os.Exit(0)
 		case syscall.SIGINT:
 			fmt.Println("SIGINT")
-			if !chatting {
-				// closingServer(chat)
-				closingServer()
-				stop = true
-			} else {
-				os.Exit(0)
-			} // chat.Append("Server has closed!\n")
-			// fmt.Println("Server closed!")
+			closingServer()
+			os.Exit(0)
 		case syscall.SIGTERM:
 			fmt.Println("SIGTERM")
-			if !chatting {
-				// closingServer(chat)
-				closingServer()
-				stop = true
-			} else {
-				os.Exit(0)
-			} // chat.Append("Server has closed!\n")
-			// fmt.Println("Server closed!")
+			closingServer()
+			os.Exit(0)
 		case syscall.SIGQUIT:
 			fmt.Println("SIGQUIT")
-			if !chatting {
-				// closingServer(chat)
-				closingServer()
-				stop = true
-			} else {
-				os.Exit(0)
-			} // chat.Append("Server has closed!\n")
-			// fmt.Println("Server closed!")
+			closingServer()
+			os.Exit(0)
 		default:
 			fmt.Println("Unknown signal")
 		}
@@ -299,8 +266,6 @@ func checkOk() {
 }
 
 func main() {
-	go handleSignals(false)
-
 	fmt.Print("Input your local ip address (e.g. 192.168.0.3) to create a server: ")
 	var host string
 	fmt.Scanf("%s", &host)
@@ -316,11 +281,10 @@ func main() {
 
 	fmt.Println("Server Address: " + listener.Addr().String())
 
-	// creating an array of existing usernames
+	// Creating an array of existing usernames
 	var users ConcSliceUsr
 
-	inChat = true
-	go handleSignals(true)
+	go handleSignals()
 
 	go func() {
 		for run {
