@@ -26,8 +26,8 @@ func readFromCon(c net.Conn) string {
 			os.Exit(1)
 			return ""
 		}
-		fmt.Println("err = io.eof") //yn
-		os.Exit(1)                  //yn
+		fmt.Println("err = io.eof") 
+		os.Exit(1)                  
 		return ""
 	}
 
